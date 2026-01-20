@@ -1,0 +1,48 @@
+defaults:
+  - _self_
+
+# -----------------------------------------------------------------------------
+# Mandatory CLI overrides (filled by GitHub Actions or human researcher)
+# -----------------------------------------------------------------------------
+run: null          # e.g. run=proposed-vit-b16-imagenet1k-fs
+mode: full         # trial | full
+results_dir: ./results
+
+# -----------------------------------------------------------------------------
+# WandB globals – toggled automatically in src/train.py when mode=trial
+# -----------------------------------------------------------------------------
+wandb:
+  entity: gengaru617-personal
+  project: 2026-01-20
+  mode: online  # switched to "disabled" in trial mode
+
+# -----------------------------------------------------------------------------
+# Generic Optuna defaults (may be overridden in per-run YAML)
+# -----------------------------------------------------------------------------
+optuna:
+  n_trials: 0
+  search_spaces: []
+
+# -----------------------------------------------------------------------------
+# Minimal placeholders so that attribute access never fails before merging.
+# -----------------------------------------------------------------------------
+model:
+  feature_dim: 768
+
+dataset:
+  name: dummy
+  shots_per_class: []
+  preprocessing:
+    resize: 224
+    normalization: imagenet
+
+training:
+  batch_size: 64
+  learning_rate: 1e-3
+  total_steps: 2000
+  synthetic_ratio: 10
+  lam_consistency: 0.5
+  diffusion_T: 20
+  sigma_max: 1.0
+  adv_eps: 0.5
+  seed: 42

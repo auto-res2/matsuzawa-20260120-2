@@ -1,0 +1,38 @@
+run_id: comparative-1-vit-b16-imagenet1k-fs
+method: Adversarial-Consistency FroFA (AC-FroFA)
+model:
+  name: ViT-B/16
+  frozen: true
+  feature_dim: 768
+dataset:
+  name: ImageNet-1k few-shot subset
+  shots_per_class: [1, 5, 10]
+  preprocessing:
+    resize: 224
+    normalization: imagenet
+training:
+  learning_rate: 0.05
+  batch_size: 256
+  epochs: null
+  total_steps: 2000
+  optimizer: sgd
+  warmup_steps: 0
+  weight_decay: 0.0
+  gradient_clip: null
+  scheduler: cosine
+  seed: 42
+  adv_eps: 0.5
+  lam_consistency: 0.5
+optuna:
+  n_trials: 15
+  search_spaces:
+    - param_name: adv_eps
+      distribution_type: uniform
+      low: 0.1
+      high: 1.0
+    - param_name: lam_consistency
+      distribution_type: loguniform
+      low: 0.05
+      high: 1.0
+runner:
+  labels: ['self-hosted', 'gpu-runner']

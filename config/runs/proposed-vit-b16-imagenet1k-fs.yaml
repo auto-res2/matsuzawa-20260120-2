@@ -1,0 +1,44 @@
+run_id: proposed-vit-b16-imagenet1k-fs
+method: Class-Conditional Feature Diffusion Augmentation (CCFD-Aug)
+model:
+  name: ViT-B/16
+  frozen: true
+  feature_dim: 768
+dataset:
+  name: ImageNet-1k few-shot subset
+  shots_per_class: [1, 5, 10]
+  preprocessing:
+    resize: 224
+    normalization: imagenet
+training:
+  learning_rate: 0.001
+  batch_size: 64
+  epochs: null
+  total_steps: 2000
+  optimizer: adam
+  warmup_steps: 100
+  weight_decay: 0.0
+  gradient_clip: 1.0
+  scheduler: linear
+  seed: 42
+  diffusion_T: 20
+  sigma_max: 1.0
+  synthetic_ratio: 10
+  lam_consistency: 0.5
+optuna:
+  n_trials: 20
+  search_spaces:
+    - param_name: synthetic_ratio
+      distribution_type: int
+      low: 1
+      high: 15
+    - param_name: lam_consistency
+      distribution_type: loguniform
+      low: 0.05
+      high: 1.0
+    - param_name: sigma_max
+      distribution_type: uniform
+      low: 0.5
+      high: 2.0
+runner:
+  labels: ['self-hosted', 'gpu-runner']
