@@ -2122,5 +2122,108 @@
     "experimental_code": "import torch, torch.nn as nn, torch.nn.functional as F\n\n# ---------- score network (feature diffusion) ----------\nclass ScoreNet(nn.Module):\n    def __init__(self, dim, n_classes, dim_embed=128):\n        super().__init__()\n        self.t_embed = nn.Sequential(\n            nn.Linear(4, dim_embed), nn.SiLU(), nn.Linear(dim_embed, dim_embed))\n        self.y_embed = nn.Embedding(n_classes, dim_embed)\n        self.net = nn.Sequential(\n            nn.Linear(dim+dim_embed, 1024), nn.SiLU(), nn.LayerNorm(1024),\n            nn.Linear(1024, dim))\n    def forward(self, f, y, t):            # f [B,C], y [B], t scalar in (0,1]\n        h = torch.cat([f, self.t_embed(t) + self.y_embed(y)], dim=-1)\n        return self.net(h)\n\n# ---------- single DSM training step ----------\n@torch.no_grad()\ndef sigma(t, sigma_max=1.0, sigma_min=0.01):\n    return sigma_max * (sigma_min/sigma_max)**t  # log-linear schedule\n\ndef dsm_step(scorenet, opt, f, y):\n    B = f.size(0)\n    t = torch.rand(B,1, device=f.device)\n    sig = sigma(t)\n    noise = torch.randn_like(f)\n    f_noisy = f + sig*noise\n    pred = scorenet(f_noisy, y, t)\n    loss = (pred - noise).pow(2).mean()\n    opt.zero_grad(); loss.backward(); opt.step();\n    return loss.item()\n\n# ---------- ancestral sampling (simplified) ----------\n@torch.no_grad()\ndef sample_features(scorenet, y, K=10, T=20, sigma_max=1.0, sigma_min=0.01):\n    f = torch.randn(len(y)*K, 768, device=y.device) * sigma_max\n    y_rep = y.repeat_interleave(K)\n    for i in range(T):\n        t = torch.full((f.size(0),1), 1 - i/(T-1), device=f.device)\n        sig = sigma(t, sigma_max, sigma_min)\n        grad = scorenet(f, y_rep, t)\n        f = f + (sig**2)*grad               # Euler–Maruyama step\n        if i < T-1:\n            sig_next = sigma(t - 1/(T-1), sigma_max, sigma_min)\n            f += torch.randn_like(f) * (sig_next * (sig_next>0)).sqrt()\n    return f\n\n# ---------- classifier + consistency loss ----------\nclass MAPHead(nn.Module):\n    def __init__(self, dim_in, dim_h, n_cls):\n        super().__init__(); self.attn = nn.MultiheadAttention(dim_in, 4, batch_first=True)\n        self.fc = nn.Linear(dim_in, n_cls)\n    def forward(self, x): v,_ = self.attn(x,x,x); return self.fc(v.mean(1))\n\ndef cls_step(model, opt, f_real, f_syn, y, lam=0.5):\n    logits_r = model(f_real)\n    logits_s = model(f_syn)\n    ce = F.cross_entropy(logits_r, y) + F.cross_entropy(logits_s, y)\n    kl = F.kl_div(F.log_softmax(logits_r,1), F.softmax(logits_s.detach(),1), 'batchmean')\n    loss = ce + lam*kl\n    opt.zero_grad(); loss.backward(); opt.step();\n    return loss.item()\n",
     "expected_result": "ImageNet-1k, ViT-B/16 frozen, mean of 5 seeds:\n               1-shot   5-shot  10-shot\nLinear probe   50.2     64.5     70.3\nFroFA          54.0     66.8     72.1\nCR-FroFA       55.5     68.2     73.3\nAC-FroFA       57.0     70.0     74.6\nCCFD-Aug       58.2±0.4 71.4±0.3 75.8±0.2\n\nOOD (ImageNet-R, 5-shot):\nLinear 40.1  FroFA 43.5  CR 44.2  AC 47.8  CCFD-Aug 49.9  (≈+2.1 pp vs AC-FroFA)\nID–OOD gap reduced by ≈30 % relative to FroFA. Calibration ECE falls from 8.7 % (AC) to 6.3 % (CCFD-Aug).\nComputation: score-net training <3 min (1-shot) to 8 min (10-shot) on RTX 3090; classifier training unchanged.",
     "expected_conclusion": "Learning a *class-conditional diffusion model inside the frozen feature manifold* allows us to synthesise unlimited, label-faithful features from just a handful of examples. Unlike adversarial or hand-crafted perturbations, CCFD-Aug explores the true class geometry, yielding both higher few-shot accuracy (+1.2 pp over the best prior method) and markedly better robustness to real distribution shifts, all without touching the backbone or incurring test-time cost. Academically, this is the first work to bridge diffusion modelling with parameter-efficient transfer learning, opening a new axis—*generative feature augmentation*—alongside adversarial and consistency approaches. Socially, the ability to train reliable vision systems from extremely scarce data and deploy them unchanged at inference time benefits privacy-sensitive and resource-limited applications such as conservation drones, rural health diagnostics, and assistive devices."
+  },
+  "experimental_design": {
+    "experiment_summary": "Task: We evaluate whether Class-Conditional Feature Diffusion Augmentation (CCFD-Aug) can improve data-efficient image classification and distribution-shift robustness while keeping the image backbone frozen.\nWorkflow:\n1. Extract last-block patch features of a frozen ViT-B/16 (86 M params) for each few-shot training image (1/5/10-shot ImageNet-1k subset). Feature tensors are cached – no images are kept in GPU RAM.\n2. Train a lightweight score network S_θ (two-layer MLP, 1.2 M params) with denoising-score matching on the cached features only (≤2 000 steps, <10 min on a single A100). The runner’s 80 GB VRAM easily accommodates the full feature cache (≈1.3 GB) and model.\n3. Generate synthetic features for every class via 20-step DDPM ancestral sampling so that synthetic:real = 10:1.\n4. Train a linear classifier g_ϕ on the union of real & synthetic features for 2 000 steps with a KL-based manifold-consistency regulariser.\n5. At test time only g_ϕ is used, matching the inference cost of a standard frozen-feature adapter (FroFA).\n6. Compare against an existing strong baseline – Adversarial-Consistency FroFA (AC-FroFA) – under identical backbone and optimiser settings.\nScale fitting Runner: The heaviest stage (caching ImageNet features) occupies <2 GB GPU RAM; score-net and classifier together <5 GB. All training runs easily fit on one A100, and the whole grid (three shot settings × five seeds × two methods) finishes in <12 GPU-hours.\nPurpose: Show that learning a diffusion model directly in feature space yields higher in-distribution accuracy and smaller ID–OOD robustness gaps than adversarial or hand-crafted perturbations while incurring negligible extra compute at inference.",
+    "runner_config": {
+      "runner_label": [
+        "self-hosted",
+        "gpu-runner"
+      ],
+      "description": "NVIDIA A100 or H200, VRAM: 80 GB or more, RAM: 2048 GB or more"
+    },
+    "evaluation_metrics": [
+      {
+        "name": "top1_accuracy",
+        "description": "Correctness: A prediction is correct if the arg-max class index equals the ground-truth label for an image.\nCalculation: top1_accuracy = (1/N) Σ_i 𝟙[ŷ_i = y_i] where N is #samples.\nTask appropriateness: Standard metric for single-label image classification reflecting user-visible correctness.\nVisualisations: Bar plot of accuracy for each shot level and a line chart of accuracy vs. synthetic-to-real ratio K (ablation)."
+      },
+      {
+        "name": "robustness_gap",
+        "description": "Correctness criteria inherit from top1_accuracy but are measured separately on in-distribution (ID) and out-of-distribution (OOD) sets.\nCalculation: robustness_gap = top1_accuracy_ID − top1_accuracy_OOD.\nTask appropriateness: Quantifies how brittle a classifier is to realistic distribution shifts (ImageNet-R & Sketch).\nVisualisations: Scatter plot of ID vs. OOD accuracy and grouped bar chart of robustness_gap across methods."
+      },
+      {
+        "name": "expected_calibration_error",
+        "description": "Correctness: Uses softmax probabilities; needs both predicted probability p̂_i and correctness indicator c_i.\nCalculation: Partition predictions into M=15 confidence bins B_m. ECE = Σ_m (|B_m|/N) |acc(B_m) − conf(B_m)| where acc(B_m) is average correctness, conf(B_m) is average confidence.\nTask appropriateness: Evaluates probabilistic calibration, important because feature-space augmentation could alter score distributions.\nVisualisations: Reliability diagram (confidence vs. accuracy) and ECE value overlay."
+      }
+    ],
+    "models_to_use": [
+      "ViT-B/16 (86 M parameters, frozen backbone)"
+    ],
+    "datasets_to_use": [
+      "ImageNet-1k few-shot subset (1/5/10 images per class)"
+    ],
+    "proposed_method": {
+      "method_name": "Class-Conditional Feature Diffusion Augmentation (CCFD-Aug)",
+      "description": "Learns a tiny denoising diffusion model directly in the frozen feature manifold to synthesise unlimited, label-conditioned features for data augmentation. Combines generative diversity with a manifold-consistency regulariser during classifier training.",
+      "training_config": {
+        "learning_rate": 0.001,
+        "batch_size": 64,
+        "optimizer": "adam",
+        "warmup_steps": 100,
+        "weight_decay": 0.0,
+        "gradient_clip": 1.0,
+        "scheduler": "linear",
+        "seed": 42,
+        "additional_params": "{\"total_steps\": 2000, \"diffusion_T\": 20, \"sigma_max\": 1.0, \"synthetic_ratio\": 10, \"lam_consistency\": 0.5}"
+      },
+      "optuna_config": {
+        "enabled": true,
+        "n_trials": 20,
+        "search_spaces": [
+          {
+            "param_name": "synthetic_ratio",
+            "distribution_type": "int",
+            "low": 1.0,
+            "high": 15.0
+          },
+          {
+            "param_name": "lam_consistency",
+            "distribution_type": "loguniform",
+            "low": 0.05,
+            "high": 1.0
+          },
+          {
+            "param_name": "sigma_max",
+            "distribution_type": "uniform",
+            "low": 0.5,
+            "high": 2.0
+          }
+        ]
+      }
+    },
+    "comparative_methods": [
+      {
+        "method_name": "Adversarial-Consistency FroFA (AC-FroFA)",
+        "description": "Generates feature-space adversarial perturbations around each support feature and trains the linear classifier with a KL-based consistency term. No generative model is learned.",
+        "training_config": {
+          "learning_rate": 0.05,
+          "batch_size": 256,
+          "optimizer": "sgd",
+          "warmup_steps": 0,
+          "weight_decay": 0.0,
+          "scheduler": "cosine",
+          "seed": 42,
+          "additional_params": "{\"total_steps\": 2000, \"adv_eps\": 0.5, \"lam_consistency\": 0.5}"
+        },
+        "optuna_config": {
+          "enabled": true,
+          "n_trials": 15,
+          "search_spaces": [
+            {
+              "param_name": "adv_eps",
+              "distribution_type": "uniform",
+              "low": 0.1,
+              "high": 1.0
+            },
+            {
+              "param_name": "lam_consistency",
+              "distribution_type": "loguniform",
+              "low": 0.05,
+              "high": 1.0
+            }
+          ]
+        }
+      }
+    ]
   }
 }
