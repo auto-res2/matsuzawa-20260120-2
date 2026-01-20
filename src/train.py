@@ -171,11 +171,12 @@ def _train_ccfd(cfg: DictConfig, data: Dict[str, Any], logger: Any) -> Dict[str,
     )
     it_s = iter(dl_s)
     for step in range(steps_s):
-        try:
-            f_b, y_b = next(it_s)
-        except StopIteration:
-            it_s = iter(dl_s)
-            f_b, y_b = next(it_s)
+        while True:
+            try:
+                f_b, y_b = next(it_s)
+                break
+            except StopIteration:
+                it_s = iter(dl_s)
         f_b, y_b = f_b.to(device), y_b.to(device)
         if step == 0:  # lifecycle assertion
             assert f_b.shape[1] == feat_dim, "Feature dimension mismatch at batch start."  # noqa: S101
@@ -215,11 +216,12 @@ def _train_ccfd(cfg: DictConfig, data: Dict[str, Any], logger: Any) -> Dict[str,
     it_c = iter(dl_c)
 
     for step in range(cfg.training.total_steps):
-        try:
-            f_b, y_b, is_real_b = next(it_c)
-        except StopIteration:
-            it_c = iter(dl_c)
-            f_b, y_b, is_real_b = next(it_c)
+        while True:
+            try:
+                f_b, y_b, is_real_b = next(it_c)
+                break
+            except StopIteration:
+                it_c = iter(dl_c)
         f_b, y_b, is_real_b = f_b.to(device), y_b.to(device), is_real_b.to(device)
 
         f_real, y_real = f_b[is_real_b], y_b[is_real_b]
@@ -287,11 +289,12 @@ def _train_ac_frofa(cfg: DictConfig, data: Dict[str, Any], logger: Any) -> Dict[
     it_dl = iter(dl)
 
     for step in range(cfg.training.total_steps):
-        try:
-            f_b, y_b = next(it_dl)
-        except StopIteration:
-            it_dl = iter(dl)
-            f_b, y_b = next(it_dl)
+        while True:
+            try:
+                f_b, y_b = next(it_dl)
+                break
+            except StopIteration:
+                it_dl = iter(dl)
         f_b, y_b = f_b.to(device), y_b.to(device)
 
         f_adv = adversarial_feature_augment(f_b, y_b, clf, eps=cfg.training.adv_eps)
