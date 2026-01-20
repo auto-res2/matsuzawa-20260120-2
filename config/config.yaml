@@ -5,6 +5,8 @@ defaults:
 # Mandatory CLI overrides (filled by GitHub Actions or human researcher)
 # -----------------------------------------------------------------------------
 run: null          # e.g. run=proposed-vit-b16-imagenet1k-fs
+run_id: null       # e.g. comparative-1-vit-b16-imagenet1k-fs (set in per-run YAML)
+method: null       # e.g. "Adversarial-Consistency FroFA (AC-FroFA)"
 mode: full         # trial | full
 results_dir: ./results
 
@@ -27,6 +29,8 @@ optuna:
 # Minimal placeholders so that attribute access never fails before merging.
 # -----------------------------------------------------------------------------
 model:
+  name: null
+  frozen: null
   feature_dim: 768
 
 dataset:
@@ -40,9 +44,21 @@ training:
   batch_size: 64
   learning_rate: 1e-3
   total_steps: 2000
+  epochs: null
+  optimizer: sgd
+  warmup_steps: 0
+  weight_decay: 0.0
+  gradient_clip: null
+  scheduler: cosine
   synthetic_ratio: 10
   lam_consistency: 0.5
   diffusion_T: 20
   sigma_max: 1.0
   adv_eps: 0.5
   seed: 42
+
+# -----------------------------------------------------------------------------
+# Runner configuration (for GitHub Actions)
+# -----------------------------------------------------------------------------
+runner:
+  labels: []
